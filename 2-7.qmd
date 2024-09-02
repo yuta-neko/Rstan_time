@@ -517,9 +517,9 @@ accuracy(naive_f_latest, x = test[, "front"])["Test set","RMSE"]
 
 
 
-## 発展
+# 発展
 
-#  非定常過程への分析
+##  非定常過程への分析
 
 詳細はnote
 
