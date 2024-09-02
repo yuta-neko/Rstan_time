@@ -309,9 +309,46 @@ sarimax_petro_law <- auto.arima(
 ```{r}
 sarimax_petro_law
 ```
+最良とされるモデルを数式に起こしてみる
+$$
+\begin{aligned}
+\left(1 - \sum^{2}_{i = 1} \phi_{i} B^{i} \right) \left(1 - \sum^{0}_{i = 1} \Phi_{i} B^{i} \right) \Delta^{0} \Delta^{1}_{12}y_{t} =& \left(1 + \sum^{1}_{j = 1} \theta_{j} B^{j} \right) \left(1 + \sum^{1}_{j = 1} \Theta_{j} B^{j} \right) \epsilon_{t} \\ 
+&+ \sum^{2}_{k = 1}\mathcal{\beta}_{k} x_{k,t}
+\end{aligned}
+$$
+
+つまりは，まとめると以下のようになる
+$$
+\begin{aligned}
+\left(1 -  \phi_{1} B^{1} - \phi_{2} B^{2} \right)  \Delta^{1}_{12}y_{t} =& \left(1 + \theta_{1} B^{1} \right) \left(1 + \Theta_{1} B^{1}  \right) \epsilon_{t}\\
+&+ \mathcal{\beta}_{1} x_{1,t} + \mathcal{\beta}_{2} x_{2,t}\\
+&\\
+\left(1 -  1.1225 B^{1} + 0.1322 B^{2} \right)  \Delta^{1}_{12}y_{t} =& \left(1 - 0.8690 B^{1} \right) \left(1 - 0.8183 B^{1}  \right) \epsilon_{t}\\
+& - 0.3748 x_{1,t}  -0.3431 x_{2,t}\\
+\end{aligned}
+$$
+
+
 
 
 # 定常性・反転可能性のチェック
+
+特性方程式の解の絶対値$|z|$が1異常であれば反転可能性と定常性を持つ
+
+$$
+\begin{aligned}
+& 1 - \phi_1 z - \phi_2 z^2 = 0\\
+& 1 + \theta_1 z = 0\\
+& 1 + \Theta_1 z = 0\\
+&\\
+& 1 - 1.1225 z + 0.1322 z^2 = 0\\
+& 1 -0.8690 z = 0\\
+& 1 -0.8183 z = 0\\
+\end{aligned}
+$$
+
+
+
 
 このチェックは`auto.arima関数の中ですでに行われている`
 
@@ -323,16 +360,20 @@ abs(polyroot(c(1, -coef(sarimax_petro_law)[c("ar1","ar2")])))
 #MA項
 abs(polyroot(c(1, coef(sarimax_petro_law)[c("ma1")])))
 
-#SMA項
+#SAR項
 
 #今回はなかった
 
+#SMA項
+abs(polyroot(c(1, coef(sarimax_petro_law)[c("sma1")])))
 
 ```
 
+
+
 # 残差のチェック
 
-まずは残差の自己相関の検定を行う
+- まずは残差の自己相関の検定を行う
 
 ```{r}
 checkresiduals(sarimax_petro_law)
@@ -341,6 +382,146 @@ checkresiduals(sarimax_petro_law)
 統計的優位ではない．何もわからなかった．異常の発見ができなかっただけで，良いモデルの保証はない．
 
 
+- 残差の正規性の検定
+
+```{r}
+jarque.bera.test(resid(sarimax_petro_law))
+```
+正規分布と有意に異なっているとは言えない．何もわからなかった．
+
+
+
+# ARIMAによる予測
+
+同定されたモデルを使って予測をします
+
+予測制度の評価にはテストデータを使う．説明変数のデータを作った上で予測を行う
+
+
+```{r}
+petro_law_test <- test[, c("PetrolPrice","law")]
+　 
+sarimax_f <- forecast(
+   sarimax_petro_law,
+   xreg = petro_law_test,
+   h = 12,                 #12時点先まで予測する
+  level = c(95,70)        #95と70信頼区間んも出す
+  )
+
+sarimax_f
+```
+
+
+結果の図示
+
+```{r}
+autoplot(sarimax_f,predict.clour = 1,main = "ARIMAによる予測")
+```
+将来の石油価格は本来わからない
+
+将来の石油価格の代理変数を考えないといけない
+
+- 過去の石油価格を予測に使う
+
+```{r}
+petro_law_mean <- data.frame(
+　   PetrolPrice = rep(mean(train[,"PetrolPrice"]),12),
+　   law = rep(1,12)
+　 )
+ 
+　 petro_law_mean <- as.matrix(petro_law_mean)
+　 
+　 sarimax_f_mean <- forecast(sarimax_petro_law, xreg = petro_law_mean)
+```
+
+- 直前の値を予測に使う
+
+```{r}
+petro_law_tail <- data.frame(
+　   PetrolPrice = rep(tail(train[,"PetrolPrice"], n = 1),12),
+　  law = rep(1,12)
+　  )
+　 
+　 petro_law_tail <- as.matrix(petro_law_tail)
+
+　 sarimax_f_tail <- forecast(sarimax_petro_law, xreg = petro_law_tail)
+```
+
+# ナイーブ予測
+
+- 過去の平均を予測値として使う
+
+```{r}
+naive_f_mean <- meanf(train[,"front"], h = 12)
+```
+
+
+- 前時点の値を予測値として使う
+
+```{r}
+naive_f_latest <- rwf(train[,"front"], h = 12)
+```
+
+# 予測の評価
+
+RMSEは以下のように定義されている
+$$
+\sqrt{ \frac{1}{T} \sum^{T}_{t = 1} e^2_{t}} = \sqrt{ \frac{1}{T} \sum^{T}_{t = 1} (y_t - \hat{y}_t)^2}
+$$
+
+- 将来の石油価格が既知
+
+Rでの実装は以下の通り
+```{r}
+sarimax_rmse <- sqrt(
+　  sum((sarimax_f$mean - test[,"front"])^2) / 
+　     length(sarimax_f$mean)
+　 )
+ 
+ sarimax_rmse
+```
+
+または
+```{r}
+accuracy(sarimax_f,x = test[, "front"])[,"RMSE"]
+```
+
+RMSEは1に近いほど良い指標であることを考慮すると，予測制度は当てはめ精度に劣っていることがわかる．
+
+-　価格が未知である．
+
+```{r}
+# 石油価格の平均を使用する
+accuracy(sarimax_f_mean, x = test[, "front"])["Test set", "RMSE"]
+
+# 直近の石油価格を使用する
+
+accuracy(sarimax_f_tail, x = test[, "front"])["Test set", "RMSE"]
+
+```
+
+
+
+- ナイーブ予測
+
+```{r}
+# ナイーブ予測　過去の平均値
+
+accuracy(naive_f_mean, x = test[, "front"])["Test set","RMSE"]
+
+# ナイーブ予測　直近の値
+
+accuracy(naive_f_latest, x = test[, "front"])["Test set","RMSE"]
+```
+
+
+
+
+## 発展
+
+#  非定常過程への分析
+
+詳細はnote
 
 
 
