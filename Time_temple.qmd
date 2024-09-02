@@ -46,7 +46,8 @@ pacman::p_load(tidyverse,
                gridExtra,
                forecast,
                tseries,
-               summarytools
+               summarytools,
+               forecast
                )
 
 #日本語の設定

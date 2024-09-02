@@ -1,7 +1,7 @@
 ---
-title: "編"
-subtitle: "サブタイトル"
-author: "宇畑 優太（1260404）"
+title: "Box-Jenkins法というフレームワーク"
+subtitle: "RによるARIMAモデル"
+author: "柳樂 優太 (1260404)"
 date: today
 execute: 
   echo: true
@@ -46,7 +46,8 @@ pacman::p_load(tidyverse,
                gridExtra,
                forecast,
                tseries,
-               summarytools
+               summarytools,
+               forecast
                )
 
 
@@ -285,10 +286,59 @@ Arima(
 )
 ```
 
+ 
+# 自動選択モデルauto.arima関数
+
+字数の決定は手順はAICを比較することだが，時間がかかるので自動化する．
+
+```{r}
+sarimax_petro_law <- auto.arima(
+  y = train[,"front"],
+  xreg = petro_law,
+  ic = "aic",
+  max.order = 7,             #p+q+P+Q
+  stepwise = F,
+  approximation = F,
+  parallel = T,
+  num.cores = 4
+)
+```
 
 
 
+```{r}
+sarimax_petro_law
+```
 
+
+# 定常性・反転可能性のチェック
+
+このチェックは`auto.arima関数の中ですでに行われている`
+
+特定方程式の絶対値を求めるコード
+```{r}
+#AR項
+abs(polyroot(c(1, -coef(sarimax_petro_law)[c("ar1","ar2")])))
+
+#MA項
+abs(polyroot(c(1, coef(sarimax_petro_law)[c("ma1")])))
+
+#SMA項
+
+#今回はなかった
+
+
+```
+
+# 残差のチェック
+
+まずは残差の自己相関の検定を行う
+
+```{r}
+checkresiduals(sarimax_petro_law)
+```
+
+統計的優位ではない．何もわからなかった．異常の発見ができなかっただけで，良いモデルの保証はない．
 
 
 
