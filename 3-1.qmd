@@ -47,7 +47,10 @@ pacman::p_load(tidyverse,
                forecast,
                tseries,
                summarytools,
-               forecast
+               forecast,
+               lmtest,
+               urca,
+               prais
                )
 
 #日本語の設定
@@ -76,18 +79,369 @@ options(mc.cores = parallel::detectCores())
 
 
 
-
-
-
-
-
-
-
-
-
 # ホワイトノイズへの回帰分析
 
+全く関係ないデータ同士を回帰分析にかけると，有意な係数は出ないはず．
 
+正規分布に従うホワイトノイズを複数発生させて，回帰分析を実行してみる
+
+```{r}
+#1回のシミュレーションにおけるサンプルサイズ
+n_sample <- 400
+
+#シード値の設定
+set.seed(1)
+
+#データの生成
+y_wn <- rnorm(n = n_sample)
+x_wn <- rnorm(n = n_sample)
+
+#回帰の実行
+mod_ols_wn <- lm(y_wn ~ x_wn)
+
+#結果の表示
+summary(mod_ols_wn)
+```
+
+p値をみるに，統計的有意はない．当然である
+
+# 単位根のあるデータ同士の回帰分析
+
+ホワイトノイズの累積和として，RW過程をシミュレーションする
+```{r}
+#シード値の設定
+set.seed(1)
+
+#RW過程
+y_rw <- cumsum(rnorm(n = n_sample))
+x_rw <- cumsum(rnorm(n = n_sample))
+
+#回帰の実行
+mod_ols_rw <- lm(y_rw ~ x_rw)
+
+#結果の表示
+summary(mod_ols_rw)
+```
+係数が，統計的有意である．
+
+全く関係のないRW過程を回帰分析にかけると，統計的有意になる．この現象を「見せかけの回帰」と呼ぶ．
+
+図示してみよう
+```{r}
+#WN
+
+#データの整形
+df_wn <- data.frame(x_wn = x_wn, y_wn = y_wn)
+
+#図示
+p_wn <- ggplot(df_wn,
+               aes(x = x_wn,
+                   y = y_wn))+
+  geom_point() +
+  geom_smooth(method = "lm", color = 1) +
+  ggtitle("White-Noise")
+
+
+#RW
+#データの整形
+df_rw <- data.frame(x_wn = x_rw, y_wn = y_rw)
+
+#図示
+p_rw <- ggplot(df_rw,
+               aes(x = x_rw,
+                   y = y_rw))+
+  geom_point() +
+  geom_smooth(method = "lm", color = 1) +
+  ggtitle("Random-Walk")
+
+#表示
+grid.arrange(p_wn, p_rw, ncol = 2)
+```
+
+# AR定常過程への回帰分析
+
+単位根ではなく，定常AR過程に従うシミュレーション
+```{r}
+set.seed(1)
+
+#定常AR過程に従うデータ
+y_ar <- arima.sim(
+  n = n_sample,
+  model = list(order = c(1,0,0), ar = c(0.8))
+)
+
+x_ar <- arima.sim(
+  n = n_sample,
+  model = list(order = c(1,0,0), ar = c(0.8))
+)
+
+#回帰の実行
+mod_old_ar <- lm(y_ar ~ x_ar)
+
+#結果
+summary(mod_old_ar)
+```
+
+
+有意な回帰係数が得られてしまった．これも「見せかけの回帰」である
+
+# 残差の自己相関と見せかけの回帰
+
+詳細はnote
+
+# DW検定
+
+詳細はnote
+
+```{r}
+#DW統計量
+resid_old <- mod_ols_rw$residuals
+
+dw <- sum(diff(resid_old)^2) / sum((resid_old)^2)
+
+dw
+```
+
+2ではないので，自己相関がありそう
+
+検定もできる
+
+```{r}
+#WN
+dwtest(mod_ols_wn)
+
+#RW
+dwtest(mod_ols_rw)
+
+#AR(1)過程
+dwtest(mod_old_ar)
+```
+
+
+
+
+RWとAR過程に自己相関が見られる
+
+# シミュレーションによる見せかけの回帰
+
+以下のコードでp値だけ取り出せる
+```{r}
+summary(mod_ols_wn)$coefficient["x_wn", "Pr(>|t|)"]
+```
+
+この作業を何回も繰り返してみよう
+
+```{r}
+n_sim <- 200　　　　#シミュレーションの回数
+
+n_sample <- 400　   #サンプルサイズ
+
+p_wn <- numeric(n_sim)
+p_rw <- numeric(n_sim)
+
+set.seed(1)
+
+for(i in 1:n_sim){
+  #自己相関のないシミュデータ
+  y_wn <- rnorm(n = n_sample)
+  x_wn <- rnorm(n = n_sample)
+  
+  #線形回帰分析
+  mod_wn <- lm(y_wn ~ x_wn)
+  
+  p_wn[i] <- summary(mod_wn)$coefficient["x_wn", "Pr(>|t|)"]
+  
+  #ランダムウォークにするシミュ
+  y_rw <- cumsum(rnorm(n = n_sample))
+  x_rw <- cumsum(rnorm(n = n_sample))
+  
+  #線形回帰分析
+  mod_rw <- lm(y_rw ~ x_rw)
+  
+  p_rw[i] <- summary(mod_rw)$coefficient["x_rw", "Pr(>|t|)"]
+}
+
+#WN
+sum(p_wn < 0.05) / n_sim
+
+#RW
+sum(p_rw < 0.05) / n_sim
+```
+
+理論値は0.05であることを考慮すると，0.85はかなり大きい．
+
+# 見せかけの回帰を防ぐ方法
+
+詳細はnote
+
+#
+
+# 単位根検定
+
+```{r}
+#RWへのADF検定
+summary(ur.df(y_rw, type = "none"))
+
+
+summary(ur.df(x_rw, type = "none"))
+```
+1.96以下である
+
+単位根を持つという帰無仮説を棄却できなかった．
+
+
+```{r}
+#定常AR(1)過程へのADF検定
+
+summary(ur.df(y_ar,type = "none"))
+
+summary(ur.df(x_ar,type = "none"))
+```
+
+1.96異常であるので，単位根がないという帰無仮説を棄却する．単位根はない．
+
+# 一般化最小二乗法：GLS
+
+詳細はnote
+
+# RによるPrains-Winsten法
+
+まずは残差を求めよう
+```{r}
+#定常AR(1)過程に従うデータをOLSでモデル化する
+
+mod_ols_ar <- lm(y_ar ~ x_ar)
+
+#残差
+resid_ols_ar <- mod_ols_ar$residual
+```
+残差に対してOLS推定を行い，残差の自己相関の推定値を求める
+
+```{r}
+mod_resid <- lm(resid_ols_ar[-1] ~ resid_ols_ar[-n_sample]-1)
+
+ro <- as.numeric(mod_resid$coefficients)
+
+ro
+```
+
+初期時点のデータの変換を行う
+
+```{r}
+y_trans_1 <- sqrt(1 - ro^2) * y_ar[1]
+x_trans_1 <- sqrt(1 - ro^2) * x_ar[1]
+psi_trans_1 <- sqrt(1 - ro^2)
+```
+
+2時点以降
+```{r}
+y_trans_2 <- y_ar[-1] - ro*y_ar[-n_sample]
+x_trans_2 <- x_ar[-1] - ro*x_ar[-n_sample]
+psi_trans_2 <- rep(1 - ro, n_sample -1 )
+```
+二つを結合する
+```{r}
+y_trans_all <- c(y_trans_1,y_trans_2)
+x_trans_all <- c(x_trans_1,y_trans_2)
+psi_trans_all <- c(psi_trans_1,psi_trans_2)
+```
+
+
+あとは普通にOLS推定量を求めるだけ
+```{r}
+mod_gls_hand <- lm(y_trans_all ~ psi_trans_all + x_trans_all -1)
+
+summary(mod_gls_hand)
+```
+
+
+統計的有意は得られなかった．見せかけの回帰を回避できた
+
+# 差分系列への回帰分析
+
+単位根があるデータへの回帰分析(非定常過程に従う)
+
+差分系列に回帰するのが簡単である
+
+```{r}
+mod_lm_diff <- lm(diff(y_rw) ~ diff(x_rw))
+
+summary(mod_lm_diff)
+```
+
+# 共和分　
+
+共和分の定義はnote
+
+変数を$y_t$と$x_t$のみとし，各々は単位根を有する[I(1)]が，線形結合が定常過程[I(0)] になる場合を考える．
+
+```{r}
+set.seed(1)
+
+rw <- cumsum(rnorm(n = n_sample))　　　　　#単位根がある
+
+x_co <- 0.6 * rw + rnorm(n = n_sample)　　 #単位根がある
+
+y_co <- 0.4 * rw + rnorm(n = n_sample)　　 #単位根がある
+```
+
+なぜ線形結合で単位根が消えるのか
+$$
+z_t = x_t - \frac{0.6}{0.4}y_t
+$$
+上記のような線形結合でRWが消える．
+
+```{r}
+#データをまとめる
+
+df <- data.frame(
+  y_co = y_co,
+  x_co = x_co,
+  z = x_co - (0.6/0.4)*y_co
+)
+
+#ts型に変形
+ts_df <- ts(df)
+
+#図示
+autoplot(ts_df, facets = T)
+```
+
+
+
+# 共和分検定
+
+単位根を持つデータに対してOLS推定で回帰直線を求める．残差を求める
+
+残差に対して単位根検定を行う．単位根がないなら，共和分がある．
+
+なぜなら，回帰式は一種の線型結合だから．共和分の関係にあれば，単位根は消えるはず．
+
+```{r}
+#データの整形
+data_mat <- matrix(nrow = n_sample,ncol = 2)
+
+data_mat[,1] <- y_co
+
+data_mat[,2] <- x_co
+
+#共和分検定
+
+summary(ca.po(data_mat, demean = "none"))
+```
+共和分がないという帰無仮説が棄却された．対立仮説を採用する．共和分関係はある．
+
+共和分関係にあるデータに差分系列への回帰分析を行うと，その関係は見えなくなる
+```{r}
+#共和分にあるデータに，差分を取ってから回帰
+y_co_diff <- diff(y_co)
+x_co_diff <- diff(x_co)
+
+mod_lm_dif_cointegrate <- lm(y_co_diff ~ x_co_diff)
+summary(mod_lm_dif_cointegrate)
+```
+
+統計的有意になってないことがわかる．差分をとればいいってもんじゃない
 
 
 
