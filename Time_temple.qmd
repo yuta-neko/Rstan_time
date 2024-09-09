@@ -1,7 +1,7 @@
 ---
 title: "編"
 subtitle: "サブタイトル"
-author: "宇畑 優太（1260404）"
+author: "柳樂 優太（1260404）"
 date: today
 execute: 
   echo: true
